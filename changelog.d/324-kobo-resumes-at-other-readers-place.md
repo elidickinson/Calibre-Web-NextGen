@@ -1,0 +1,3 @@
+### Fixed
+
+- **A Kobo now opens where you stopped reading in KOReader or the web reader (#324, #1425, #1446).** Before, the Kobo was sent the new percentage but kept the page from its own last sync, so it showed one place and opened at another. The server now sends the Kobo a place in its own KEPUB. It is the exact sentence when that can be proven: KOReader holds the library's EPUB, or the web reader's position is known. Otherwise it is the spot at the synced percentage. This only happens for a Kobo that downloaded the library's current KEPUB; any other Kobo is sent its bookmark as before. A Kobo's own position is still sent unchanged, and the furthest position still wins. Thanks to @jrodrigoferreira, @iroQuai, @IceSentry and @uschi1 for the reports and testing.

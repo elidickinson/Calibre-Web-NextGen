@@ -4576,8 +4576,43 @@ def get_kobo_reading_state_response(book, kobo_reading_state):
         "PriorityTimestamp": convert_to_kobo_timestamp_string(kobo_reading_state.priority_timestamp),
         "StatusInfo": get_status_info_response(kobo_reading_state.book_read_link),
         "Statistics": get_statistics_response(kobo_reading_state.statistics),
-        "CurrentBookmark": get_current_bookmark_response(kobo_reading_state.current_bookmark),
+        "CurrentBookmark": get_current_bookmark_response(
+            kobo_reading_state.current_bookmark,
+            location=_resume_location_for_requesting_kobo(book, kobo_reading_state),
+        ),
     }
+
+
+def _resume_location_for_requesting_kobo(book, kobo_reading_state):
+    """The span the requesting Kobo should resume at, when the stored one is stale.
+
+    A KOReader or web-reader position advances the shared bookmark's
+    percentage but not its ``Location``, which Nickel seeks to (#1425, #1446);
+    ``koreader_position.kobo_location_for_device`` places it in this Kobo's
+    KEPUB. ``None`` serves the stored bookmark unchanged.
+    """
+    from flask import has_app_context
+    device_id = (getattr(g, "annotation_origin_device_id", None)
+                 if has_app_context() else None)
+    if not device_id:
+        return None
+    try:
+        from .services.koreader_position import kobo_location_for_device
+        location = kobo_location_for_device(
+            user_id=kobo_reading_state.user_id,
+            book=book,
+            bookmark=kobo_reading_state.current_bookmark,
+            device_id=device_id,
+        )
+    except Exception:  # noqa: BLE001 - a broken file must not break the sync
+        log.exception("Kobo resume location failed for book %s",
+                      getattr(book, "id", None))
+        return None
+    if location is not None:
+        log.debug("Kobo device %s book %s resumes at %s %s (%s)", device_id,
+                  getattr(book, "id", None), location["Source"], location["Value"],
+                  "exact" if location["exact"] else "by percentage")
+    return location
 
 
 def get_status_info_response(book_read):
@@ -4609,12 +4644,24 @@ def _clean_progress(value):
     return value
 
 
-def get_current_bookmark_response(current_bookmark):
+def get_current_bookmark_response(current_bookmark, location=None):
+    """``location`` replaces the stored ``Location`` (and the chapter
+    percentage measured with it); see ``_resume_location_for_requesting_kobo``."""
     resp = {
         "LastModified": convert_to_kobo_timestamp_string(current_bookmark.last_modified),
     }
     if current_bookmark.progress_percent is not None:
         resp["ProgressPercent"] = _clean_progress(current_bookmark.progress_percent)
+    if location is not None:
+        if location.get("ContentSourceProgressPercent") is not None:
+            resp["ContentSourceProgressPercent"] = _clean_progress(
+                location["ContentSourceProgressPercent"])
+        resp["Location"] = {
+            "Value": location["Value"],
+            "Type": location["Type"],
+            "Source": location["Source"],
+        }
+        return resp
     if current_bookmark.content_source_progress_percent is not None:
         resp["ContentSourceProgressPercent"] = _clean_progress(current_bookmark.content_source_progress_percent)
     if current_bookmark.location_value:
